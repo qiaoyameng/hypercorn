@@ -1,3 +1,9 @@
+Unreleased
+----------
+
+* Add a ``config.ssl_context.reload()`` control entry to reload the
+  TLS certificate, key, and CA certs without restarting the server.
+
 0.18.0 2025-11-08
 -----------------
 

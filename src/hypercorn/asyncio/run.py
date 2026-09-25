@@ -93,7 +93,7 @@ async def worker_serve(
 
     ssl_handshake_timeout = None
     if config.ssl_enabled:
-        ssl_context = config.create_ssl_context()
+        ssl_context = config.ssl_context
         ssl_handshake_timeout = config.ssl_handshake_timeout
 
     max_requests = None

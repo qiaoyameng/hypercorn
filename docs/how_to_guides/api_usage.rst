@@ -121,3 +121,23 @@ Forcing ASGI or WSGI mode
 The ``serve`` function takes a ``mode`` argument that can be
 ``"asgi"`` or ``"wsgi"`` to force the app to be considered ASGI or
 WSGI as required.
+
+Reloading TLS certificates
+--------------------------
+
+The TLS certificate, key, CA certs, and related configuration can be
+reloaded without restarting the server via the config's
+``ssl_context``. This is useful after rotating certificates, as
+established connections are unaffected and only new connections
+complete the handshake with the reloaded certificate,
+
+.. code-block:: python
+
+    if not config.ssl_context.reload():
+        ...  # The reload failed, the previous certificate is still used
+
+The reload builds and validates a candidate SSL context before
+switching the listeners to it, so if the files are (temporarily)
+missing or invalid (for example the certificate and key don't match)
+the previous context continues to be used and ``reload`` returns
+``False``.

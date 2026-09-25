@@ -9,13 +9,18 @@ import stat
 import sys
 import types
 import warnings
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from ssl import (
     create_default_context,
+    MemoryBIO,
     OP_NO_COMPRESSION,
+    PROTOCOL_TLS_SERVER,
     Purpose,
     SSLContext,
+    SSLError,
+    SSLObject,
+    SSLSession,
     TLSVersion,
     VerifyFlags,
     VerifyMode,
@@ -54,6 +59,9 @@ class SocketTypeError(Exception):
         )
 
 
+ServernameCallback = Callable[[SSLObject, str | None, SSLContext], None]
+
+
 class Config:
     _bind = ["127.0.0.1:8000"]
     _insecure_bind: list[str] = []
@@ -61,6 +69,7 @@ class Config:
     _quic_addresses: list[tuple] = []
     _log: Logger | None = None
     _root_path: str = ""
+    _ssl_context: ReloadableSSLContext | None = None
 
     access_log_format = '%(h)s %(l)s %(l)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"'
     accesslog: logging.Logger | str | None = None
@@ -192,6 +201,21 @@ class Config:
             context.verify_flags = self.verify_flags
 
         return context
+
+    @property
+    def ssl_context(self) -> ReloadableSSLContext | None:
+        """The reloadable SSL context used by the server's listeners.
+
+        This is the explicit control entry for TLS reloads, call
+        ``config.ssl_context.reload()`` to re-read the certfile,
+        keyfile, CA certs, and related configuration without
+        restarting the server.
+        """
+        if not self.ssl_enabled:
+            return None
+        if self._ssl_context is None:
+            self._ssl_context = ReloadableSSLContext(self)
+        return self._ssl_context
 
     @property
     def ssl_enabled(self) -> bool:
@@ -408,3 +432,72 @@ class Config:
             if not isinstance(getattr(instance, key), types.ModuleType) and not key.startswith("__")
         }
         return cls.from_mapping(mapping)
+
+
+class ReloadableSSLContext(SSLContext):
+    """An SSL context that can be reloaded without restarting.
+
+    Each new handshake is delegated to a candidate context built from
+    the config. Calling :meth:`reload` builds and validates a new
+    candidate before atomically swapping it in, so established
+    connections are unaffected and any new handshake completes in full
+    with either the previous or the reloaded context.
+    """
+
+    def __new__(cls, config: Config) -> ReloadableSSLContext:
+        return super().__new__(cls, PROTOCOL_TLS_SERVER)
+
+    def __init__(self, config: Config) -> None:
+        super().__init__()
+        self._config = config
+        self._servername_callback: ServernameCallback | None = None
+        self._context = self._build_context()
+
+    def reload(self) -> bool:
+        """Reload the certfile, keyfile, CA certs, and SSL settings.
+
+        Returns True if the reloaded context is now in use. If the
+        files are missing or invalid (for example the certificate and
+        key don't match) the previous context continues to be used and
+        False is returned.
+        """
+        try:
+            context = self._build_context()
+        except (OSError, SSLError, ValueError) as error:
+            error_logger = self._config.log.error_logger
+            if error_logger is not None:
+                error_logger.warning("Failed to reload the SSL context: %s", error)
+            return False
+        else:
+            self._context = context
+            return True
+
+    def wrap_bio(
+        self,
+        incoming: MemoryBIO,
+        outgoing: MemoryBIO,
+        server_side: bool = False,
+        server_hostname: str | None = None,
+        session: SSLSession | None = None,
+    ) -> SSLObject:
+        return self._context.wrap_bio(
+            incoming,
+            outgoing,
+            server_side=server_side,
+            server_hostname=server_hostname,
+            session=session,
+        )
+
+    def set_servername_callback(self, method: ServernameCallback | None) -> None:
+        # Applied to every candidate context so that the SNI
+        # configuration survives reloads.
+        self._servername_callback = method
+        self._context.set_servername_callback(method)
+
+    def _build_context(self) -> SSLContext:
+        context = self._config.create_ssl_context()
+        if context is None:
+            raise ValueError("Cannot create a SSL context, SSL is not enabled")
+        if self._servername_callback is not None:
+            context.set_servername_callback(self._servername_callback)
+        return context
