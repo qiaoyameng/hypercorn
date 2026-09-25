@@ -1,3 +1,11 @@
+Unreleased
+----------
+
+* Add ``Config.reload_tls`` to explicitly reload the TLS
+  certificate/key/CA and related configuration without restarting,
+  keeping established connections and ALPN, client certificate, and
+  SNI behaviour intact (asyncio and Trio workers).
+
 0.18.0 2025-11-08
 -----------------
 

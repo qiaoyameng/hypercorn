@@ -56,7 +56,9 @@ async def worker_serve(
                 for sock in sockets.insecure_sockets:
                     sock.listen(config.backlog)
 
-            ssl_context = config.create_ssl_context()
+            ssl_context = None
+            if config.ssl_enabled:
+                ssl_context = config.tls_reloader.dispatcher
             listeners: list[trio.SSLListener[trio.SocketStream] | trio.SocketListener] = []
             binds = []
             for sock in sockets.secure_sockets:

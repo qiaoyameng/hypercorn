@@ -14,4 +14,5 @@ How to guides
    proxy_fix.rst
    server_names.rst
    statsd.rst
+   tls_reloading.rst
    wsgi_apps.rst

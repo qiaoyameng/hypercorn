@@ -30,6 +30,7 @@ else:
     import tomli as tomllib
 
 from .logging import Logger
+from .tls import TLSReloader, TLSReloadResult
 
 BYTES = 1
 OCTETS = 1
@@ -61,6 +62,7 @@ class Config:
     _quic_addresses: list[tuple] = []
     _log: Logger | None = None
     _root_path: str = ""
+    _tls_reloader: TLSReloader | None = None
 
     access_log_format = '%(h)s %(l)s %(l)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"'
     accesslog: logging.Logger | str | None = None
@@ -196,6 +198,24 @@ class Config:
     @property
     def ssl_enabled(self) -> bool:
         return self.certfile is not None and self.keyfile is not None
+
+    @property
+    def tls_reloader(self) -> TLSReloader:
+        if self._tls_reloader is None:
+            self._tls_reloader = TLSReloader(self)
+        return self._tls_reloader
+
+    def reload_tls(self) -> TLSReloadResult:
+        """Reload the TLS configuration without restarting the server.
+
+        This re-reads the certfile, keyfile, CA certs, and related
+        configuration (ALPN protocols, verify mode/flags, ciphers),
+        constructs and validates a candidate context, and only then
+        swaps the context the listeners use. Established connections
+        are unaffected. Returns a TLSReloadResult describing the
+        outcome; on failure the previous certificate remains in use.
+        """
+        return self.tls_reloader.reload()
 
     def create_sockets(self) -> Sockets:
         if self.ssl_enabled:
