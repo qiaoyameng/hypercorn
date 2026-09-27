@@ -58,15 +58,24 @@ async def worker_serve(
 
             ssl_context = config.create_ssl_context()
             listeners: list[trio.SSLListener[trio.SocketStream] | trio.SocketListener] = []
+            secure_listeners: list[trio.SSLListener[trio.SocketStream] | trio.SocketListener] = []
             binds = []
             for sock in sockets.secure_sockets:
-                listeners.append(
-                    trio.SSLListener(
-                        trio.SocketListener(trio.socket.from_stdlib_socket(sock)),
-                        ssl_context,
-                        https_compatible=True,
+                if config.proxy_protocol:
+                    # The PROXY protocol preamble must be read before
+                    # the TLS handshake, so the connection is upgraded
+                    # to TLS within the TCP server instead.
+                    secure_listeners.append(
+                        trio.SocketListener(trio.socket.from_stdlib_socket(sock))
                     )
-                )
+                else:
+                    secure_listeners.append(
+                        trio.SSLListener(
+                            trio.SocketListener(trio.socket.from_stdlib_socket(sock)),
+                            ssl_context,
+                            https_compatible=True,
+                        )
+                    )
                 bind = repr_socket_addr(sock.family, sock.getsockname())
                 binds.append(f"https://{bind}")
                 await config.log.info(f"Running on https://{bind} (CTRL + C to quit)")
@@ -107,6 +116,25 @@ async def worker_serve(
                             handler_nursery=server_nursery,
                         ),
                     )
+
+                    if secure_listeners:
+                        secure_handler = partial(
+                            TCPServer,
+                            app,
+                            config,
+                            context,
+                            ConnectionState(lifespan_state.copy()),
+                        )
+                        if config.proxy_protocol:
+                            secure_handler = partial(secure_handler, ssl_context=ssl_context)
+                        nursery.start_soon(
+                            partial(
+                                trio.serve_listeners,
+                                secure_handler,
+                                secure_listeners,
+                                handler_nursery=server_nursery,
+                            ),
+                        )
 
                     await trio.sleep_forever()
             except BaseExceptionGroup as error:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import ipaddress
 import logging
 import os
 import socket
@@ -60,6 +61,8 @@ class Config:
     _quic_bind: list[str] = []
     _quic_addresses: list[tuple] = []
     _log: Logger | None = None
+    _proxy_protocol_allowed_networks: list[str] = []
+    _proxy_protocol_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] | None = None
     _root_path: str = ""
 
     access_log_format = '%(h)s %(l)s %(l)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"'
@@ -97,6 +100,9 @@ class Config:
     max_requests: int | None = None
     max_requests_jitter: int = 0
     pid_path: str | None = None
+    proxy_protocol: bool = False
+    proxy_protocol_max_size: int = 512 * BYTES
+    proxy_protocol_timeout: float = 5 * SECONDS
     server_names: list[str] = []
     shutdown_timeout = 60 * SECONDS
     ssl_handshake_timeout = 60 * SECONDS
@@ -166,6 +172,27 @@ class Config:
     @root_path.setter
     def root_path(self, value: str) -> None:
         self._root_path = value.rstrip("/")
+
+    @property
+    def proxy_protocol_allowed_networks(self) -> list[str]:
+        return self._proxy_protocol_allowed_networks
+
+    @proxy_protocol_allowed_networks.setter
+    def proxy_protocol_allowed_networks(self, value: list[str] | str) -> None:
+        if isinstance(value, str):
+            self._proxy_protocol_allowed_networks = [value]
+        else:
+            self._proxy_protocol_allowed_networks = value
+        self._proxy_protocol_networks = None
+
+    @property
+    def proxy_protocol_networks(self) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+        if self._proxy_protocol_networks is None:
+            self._proxy_protocol_networks = [
+                ipaddress.ip_network(network, strict=False)
+                for network in self._proxy_protocol_allowed_networks
+            ]
+        return self._proxy_protocol_networks
 
     def create_ssl_context(self) -> SSLContext | None:
         if not self.ssl_enabled:

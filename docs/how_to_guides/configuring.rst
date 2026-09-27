@@ -144,6 +144,24 @@ max_requests_jitter        ``--max-requests-jitter``     This jitter causes the 
                                                          to be randomized by
                                                          ``randint(0, max_requests_jitter)``
 pid_path                   ``-p``, ``--pid``             Location to write the PID (Program ID) to.
+proxy_protocol             ``--proxy-protocol``           Expect a PROXY protocol version 2 preamble
+                                                         at the start of every TCP connection, before
+                                                         any TLS handshake. The client and server
+                                                         addresses in the ASGI scope are taken from
+                                                         the preamble. Only enable this behind a
+                                                         trusted load balancer, see
+                                                         *proxy_protocol_allowed_networks*.
+proxy_protocol_allowed_networks ``--proxy-protocol-allowed-network`` List of networks (CIDR notation, e.g.
+                                                         ``10.0.0.0/8``) that connections must
+                                                         originate from for the PROXY protocol
+                                                         preamble to be accepted. Connections from
+                                                         anywhere else are rejected. Defaults to an
+                                                         empty list, which rejects all connections.
+proxy_protocol_max_size    N/A                           Maximum size in bytes of the PROXY            512
+                                                         protocol preamble, including any TLVs.
+proxy_protocol_timeout     N/A                           Seconds to wait for the PROXY protocol        5s
+                                                         preamble to arrive before closing the
+                                                         connection.
 quic_bind                  ``--quic-bind``               The UDP/QUIC host/address to bind to. See
                                                          *bind* for formatting options.
 root_path                  ``--root-path``               The setting for the ASGI root_path

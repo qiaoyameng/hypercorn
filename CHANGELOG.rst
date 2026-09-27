@@ -1,3 +1,10 @@
+Unreleased
+----------
+
+* Add optional PROXY protocol version 2 support, enabled via the
+  ``proxy_protocol`` setting and restricted to
+  ``proxy_protocol_allowed_networks``.
+
 0.18.0 2025-11-08
 -----------------
 

@@ -153,6 +153,22 @@ def main(sys_args: list[str] | None = None) -> int:
         "-p", "--pid", help="Location to write the PID (Program ID) to.", default=sentinel
     )
     parser.add_argument(
+        "--proxy-protocol",
+        help="Expect a PROXY protocol version 2 preamble on every TCP connection",
+        action="store_true",
+        default=sentinel,
+    )
+    parser.add_argument(
+        "--proxy-protocol-allowed-network",
+        dest="proxy_protocol_allowed_networks",
+        help="""A network (CIDR notation) that connections must originate from
+        for the PROXY protocol preamble to be accepted. Can be used multiple
+        times.
+        """,
+        default=[],
+        action="append",
+    )
+    parser.add_argument(
         "--quic-bind",
         dest="quic_binds",
         help="""The UDP/QUIC host/address to bind to. See *bind* for formatting
@@ -279,6 +295,10 @@ def main(sys_args: list[str] | None = None) -> int:
         config.max_requests_jitter = args.max_requests
     if args.pid is not sentinel:
         config.pid_path = args.pid
+    if args.proxy_protocol is not sentinel:
+        config.proxy_protocol = args.proxy_protocol
+    if args.proxy_protocol_allowed_networks:
+        config.proxy_protocol_allowed_networks = args.proxy_protocol_allowed_networks
     if args.root_path is not sentinel:
         config.root_path = args.root_path
     if args.reload is not sentinel:

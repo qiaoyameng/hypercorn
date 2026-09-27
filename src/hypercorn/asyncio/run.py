@@ -102,26 +102,44 @@ async def worker_serve(
     context = WorkerContext(max_requests)
     server_tasks: set[asyncio.Task] = set()
 
-    async def _server_callback(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _server_callback(
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        ssl_context: ssl.SSLContext | None = None,
+    ) -> None:
         task = asyncio.current_task(loop)
         server_tasks.add(task)
         task.add_done_callback(server_tasks.discard)
-        await TCPServer(app, loop, config, context, lifespan_state, reader, writer)
+        await TCPServer(
+            app, loop, config, context, lifespan_state, reader, writer, ssl_context
+        )
 
     servers = []
     for sock in sockets.secure_sockets:
         if config.workers > 1 and platform.system() == "Windows":
             sock = _share_socket(sock)
 
-        servers.append(
-            await asyncio.start_server(
-                _server_callback,
-                backlog=config.backlog,
-                ssl=ssl_context,
-                sock=sock,
-                ssl_handshake_timeout=ssl_handshake_timeout,
+        if config.proxy_protocol:
+            # The PROXY protocol preamble must be read before the TLS
+            # handshake, so the connection is upgraded to TLS within
+            # the TCP server instead.
+            servers.append(
+                await asyncio.start_server(
+                    partial(_server_callback, ssl_context=ssl_context),
+                    backlog=config.backlog,
+                    sock=sock,
+                )
             )
-        )
+        else:
+            servers.append(
+                await asyncio.start_server(
+                    _server_callback,
+                    backlog=config.backlog,
+                    ssl=ssl_context,
+                    sock=sock,
+                    ssl_handshake_timeout=ssl_handshake_timeout,
+                )
+            )
         bind = repr_socket_addr(sock.family, sock.getsockname())
         await config.log.info(f"Running on https://{bind} (CTRL + C to quit)")
 
