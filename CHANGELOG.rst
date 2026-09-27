@@ -1,3 +1,13 @@
+Unreleased
+----------
+
+* Add optional PROXY protocol v2 support via the proxy_protocol,
+  proxy_protocol_allowed_networks, proxy_protocol_max_header_size, and
+  proxy_protocol_timeout configs. When enabled the preamble is parsed
+  before any TLS handshake or HTTP parsing, the ASGI client/server are
+  set from the preamble, and only explicitly allowed peer networks may
+  send one.
+
 0.18.0 2025-11-08
 -----------------
 

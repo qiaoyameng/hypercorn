@@ -91,10 +91,13 @@ async def worker_serve(
     if sockets is None:
         sockets = config.create_sockets()
 
+    ssl_context = None
     ssl_handshake_timeout = None
     if config.ssl_enabled:
         ssl_context = config.create_ssl_context()
         ssl_handshake_timeout = config.ssl_handshake_timeout
+        if config.proxy_protocol and sys.version_info < (3, 11):
+            raise Exception("The proxy_protocol config with SSL requires Python 3.11 or greater")
 
     max_requests = None
     if config.max_requests is not None:
@@ -106,7 +109,16 @@ async def worker_serve(
         task = asyncio.current_task(loop)
         server_tasks.add(task)
         task.add_done_callback(server_tasks.discard)
-        await TCPServer(app, loop, config, context, lifespan_state, reader, writer)
+        await TCPServer(
+            app,
+            loop,
+            config,
+            context,
+            lifespan_state,
+            reader,
+            writer,
+            ssl_context if config.proxy_protocol else None,
+        )
 
     servers = []
     for sock in sockets.secure_sockets:
@@ -117,9 +129,9 @@ async def worker_serve(
             await asyncio.start_server(
                 _server_callback,
                 backlog=config.backlog,
-                ssl=ssl_context,
+                ssl=None if config.proxy_protocol else ssl_context,
                 sock=sock,
-                ssl_handshake_timeout=ssl_handshake_timeout,
+                ssl_handshake_timeout=None if config.proxy_protocol else ssl_handshake_timeout,
             )
         )
         bind = repr_socket_addr(sock.family, sock.getsockname())

@@ -68,114 +68,168 @@ can be used,
 Configuration options
 =====================
 
-========================== ============================= =============================================== ========================
-Attribute                  Command line                  Purpose                                         Default
--------------------------- ----------------------------- ----------------------------------------------- ------------------------
-access_log_format          ``--access-logformat``        The log format for the access log, see
-                                                         :ref:`how_to_log`.
-accesslog                  ``--access-logfile``          The target logger for access logs, use
-                                                         ``-`` for stdout.
-alpn_protocols             N/A                           The HTTP protocols to advertise over            ``h2`` and ``http/1.1``
-                                                         ALPN.
-alt_svc_headers            N/A                           List of header values to return as
-                                                         Alt-Svc headers.
-application_path           N/A                           The path location of the ASGI                   cwd
-                                                         application.
-backlog                    ``--backlog``                 The maximum number of pending                   100
-                                                         connections.
-bind                       ``-b``, ``--bind``            The TCP host/address to bind to.
-                                                         Should be either host:port, host,
-                                                         unix:path or fd://num, e.g.
-                                                         127.0.0.1:5000, 127.0.0.1,
-                                                         unix:/tmp/socket or fd://33
-                                                         respectively.
-ca_certs                   ``--ca-certs``                Path to the SSL CA certificate file.
-certfile                   ``--certfile``                Path to the SSL certificate file.
-ciphers                    ``--ciphers``                 Ciphers to use for the SSL setup.               ``ECDHE+AESGCM``
-debug                      ``--debug``                   Enable debug mode, i.e. extra logging           ``False``
-                                                         and checks.
-dogstatsd_tags             N/A                           DogStatsd format tag, see
-                                                         :ref:`using_statsd`.
-errorlog                   ``--error-logfile``           The target location for the error log,
-                           ``--log-file``                use `-` for stderr.
-graceful_timeout           ``--graceful-timeout``        Time to wait after SIGTERM or Ctrl-C            3s
-                                                         for any remaining requests (tasks) to
-                                                         complete.
-read_timeout               ``--read-timeout``            Seconds to wait before timing out reads         No timeout.
-                                                         on TCP sockets.
-group                      ``-g``, ``--group``           Group to own any unix sockets.
-h11_max_incomplete_size    N/A                           The max HTTP/1.1 request line + headers         16KiB
-                                                         size in bytes.
-h11_pass_raw_headers       N/A                           Pass the raw headers from h11 to the            ``False``
-                                                         Request object, which preserves header
-                                                         casing.
-h2_max_concurrent_streams  N/A                           Maximum number of HTTP/2 concurrent             100
-                                                         streams.
-h2_max_header_list_size    N/A                           Maximum number of HTTP/2 headers.               65536
-h2_max_inbound_frame_size  N/A                           Maximum size of a HTTP/2 frame.                 16KiB
-include_date_header        N/A                           Include the                                     ``True``
-                                                         ``Date: Tue, 15 Nov 1994 08:12:31 GMT``
-                                                         header.
-include_server_header      N/A                           Include the ``Server: Hypercorn`` header.       ``True``
-insecure_bind              ``--insecure-bind``           The TCP host/address to bind to. SSL
-                                                         options will not apply to these binds.
-                                                         See *bind* for formatting options.
-                                                         Care must be taken! See HTTP -> HTTPS
-                                                         redirection docs.
-keep_alive_max_requests    N/A                           Maximum number of requests before connection    1000
-                                                         is closed. HTTP/1 & HTTP/2 only.
-keep_alive_timeout         ``--keep-alive``              Seconds to keep inactive connections alive      5s
-                                                         before closing.
-keyfile                    ``--keyfile``                 Path to the SSL key file.
-keyfile_password           ``--keyfile-password``        Password for the keyfile if the keyfile is
-                                                         password-protected.
-logconfig                  ``--log-config``              A Python logging configuration file. This       The logging ini format.
-                                                         can be prefixed with 'json:' or 'toml:' to
-                                                         load the configuration from a file in that
-                                                         format.
-logconfig_dict             N/A                           A Python logging configuration dictionary.
-logger_class               N/A                           Type of class to use for logging.
-loglevel                   ``--log-level``               The (error) log level.                          ``INFO``
-max_app_queue_size         N/A                           The maximum number of events to queue up        10
-                                                         sending to the ASGI application.
-max_requests               ``--max-requests``            Maximum number of requests a worker will
-                                                         process before restarting.
-max_requests_jitter        ``--max-requests-jitter``     This jitter causes the max-requests per worker  0
-                                                         to be randomized by
-                                                         ``randint(0, max_requests_jitter)``
-pid_path                   ``-p``, ``--pid``             Location to write the PID (Program ID) to.
-quic_bind                  ``--quic-bind``               The UDP/QUIC host/address to bind to. See
-                                                         *bind* for formatting options.
-root_path                  ``--root-path``               The setting for the ASGI root_path
-                                                         variable.
-server_names               ``--server-name``             The hostnames that can be served, requests
-                                                         to different hosts will be responded to
-                                                         with 404s.
-shutdown_timeout           N/A                           Timeout when waiting for Lifespan               60s
-                                                         shutdowns to complete.
-ssl_handshake_timeout      N/A                           Timeout when waiting for SSL handshakes to      60s
-                                                         complete.
-startup_timeout            N/A                           Timeout when waiting for Lifespan               60s
-                                                         startups to complete.
-statsd_host                ``--statsd-host``             The host:port of the statsd server.
-statsd_prefix              ``--statsd-prefix``           Prefix for all statsd messages.
-umask                      ``-m``, ``--umask``           The permissions bit mask to use on any
-                                                         unix sockets.
-use_reloader               ``--reload``                  Enable automatic reloads on code changes.
-user                       ``-u``, ``--user``            User to own any unix sockets.
-verify_flags               N/A                           SSL context verify flags.
-verify_mode                ``--verify-mode``             SSL verify mode for peer's certificate,
-                                                         see ssl.VerifyMode enum for possible
-                                                         values.
-websocket_max_message_size N/A                           Maximum size of a WebSocket frame.              16MiB
-websocket_ping_interval    ``--websocket-ping-interval`` If set this is the time in seconds between
-                                                         pings sent to the client. This can be used
-                                                         to keep the websocket connection alive.
-worker_class               ``-k``, ``--worker-class``    The type of worker to use. Options include
-                                                         asyncio, uvloop (pip install
-                                                         hypercorn[uvloop]), and trio (pip install
-                                                         hypercorn[trio]).
-workers                    ``-w``, ``--workers``         The number of workers to spawn and use.         1
-wsgi_max_body_size         N/A                           The maximum size of a body that will be         16MiB
-                                                         accepted in WSGI mode.
-========================== ============================= =============================================== ========================
+================================== ============================= =============================================== ========================
+Attribute                          Command line                  Purpose                                         Default
+---------------------------------- ----------------------------- ----------------------------------------------- ------------------------
+access_log_format                  ``--access-logformat``        The log format for the access log, see
+                                                                 :ref:`how_to_log`.
+accesslog                          ``--access-logfile``          The target logger for access logs, use
+                                                                 ``-`` for stdout.
+alpn_protocols                     N/A                           The HTTP protocols to advertise over            ``h2`` and ``http/1.1``
+                                                                 ALPN.
+alt_svc_headers                    N/A                           List of header values to return as
+                                                                 Alt-Svc headers.
+application_path                   N/A                           The path location of the ASGI                   cwd
+                                                                 application.
+backlog                            ``--backlog``                 The maximum number of pending                   100
+                                                                 connections.
+bind                               ``-b``, ``--bind``            The TCP host/address to bind to.
+                                                                 Should be either host:port, host,
+                                                                 unix:path or fd://num, e.g.
+                                                                 127.0.0.1:5000, 127.0.0.1,
+                                                                 unix:/tmp/socket or fd://33
+                                                                 respectively.
+ca_certs                           ``--ca-certs``                Path to the SSL CA certificate file.
+certfile                           ``--certfile``                Path to the SSL certificate file.
+ciphers                            ``--ciphers``                 Ciphers to use for the SSL setup.               ``ECDHE+AESGCM``
+debug                              ``--debug``                   Enable debug mode, i.e. extra logging           ``False``
+                                                                 and checks.
+dogstatsd_tags                     N/A                           DogStatsd format tag, see
+                                                                 :ref:`using_statsd`.
+errorlog                           ``--error-logfile``           The target location for the error log,
+                                   ``--log-file``                use `-` for stderr.
+graceful_timeout                   ``--graceful-timeout``        Time to wait after SIGTERM or Ctrl-C            3s
+                                                                 for any remaining requests (tasks) to
+                                                                 complete.
+read_timeout                       ``--read-timeout``            Seconds to wait before timing out reads         No timeout.
+                                                                 on TCP sockets.
+group                              ``-g``, ``--group``           Group to own any unix sockets.
+h11_max_incomplete_size            N/A                           The max HTTP/1.1 request line + headers         16KiB
+                                                                 size in bytes.
+h11_pass_raw_headers               N/A                           Pass the raw headers from h11 to the            ``False``
+                                                                 Request object, which preserves header
+                                                                 casing.
+h2_max_concurrent_streams          N/A                           Maximum number of HTTP/2 concurrent             100
+                                                                 streams.
+h2_max_header_list_size            N/A                           Maximum number of HTTP/2 headers.               65536
+h2_max_inbound_frame_size          N/A                           Maximum size of a HTTP/2 frame.                 16KiB
+include_date_header                N/A                           Include the                                     ``True``
+                                                                 ``Date: Tue, 15 Nov 1994 08:12:31 GMT``
+                                                                 header.
+include_server_header              N/A                           Include the ``Server: Hypercorn`` header.       ``True``
+insecure_bind                      ``--insecure-bind``           The TCP host/address to bind to. SSL
+                                                                 options will not apply to these binds.
+                                                                 See *bind* for formatting options.
+                                                                 Care must be taken! See HTTP -> HTTPS
+                                                                 redirection docs.
+keep_alive_max_requests            N/A                           Maximum number of requests before connection    1000
+                                                                 is closed. HTTP/1 & HTTP/2 only.
+keep_alive_timeout                 ``--keep-alive``              Seconds to keep inactive connections alive      5s
+                                                                 before closing.
+keyfile                            ``--keyfile``                 Path to the SSL key file.
+keyfile_password                   ``--keyfile-password``        Password for the keyfile if the keyfile is
+                                                                 password-protected.
+logconfig                          ``--log-config``              A Python logging configuration file. This       The logging ini format.
+                                                                 can be prefixed with 'json:' or 'toml:' to
+                                                                 load the configuration from a file in that
+                                                                 format.
+logconfig_dict                     N/A                           A Python logging configuration dictionary.
+logger_class                       N/A                           Type of class to use for logging.
+loglevel                           ``--log-level``               The (error) log level.                          ``INFO``
+max_app_queue_size                 N/A                           The maximum number of events to queue up        10
+                                                                 sending to the ASGI application.
+max_requests                       ``--max-requests``            Maximum number of requests a worker will
+                                                                 process before restarting.
+max_requests_jitter                ``--max-requests-jitter``     This jitter causes the max-requests per worker  0
+                                                                 to be randomized by
+                                                                 ``randint(0, max_requests_jitter)``
+pid_path                           ``-p``, ``--pid``             Location to write the PID (Program ID) to.
+proxy_protocol                     N/A                           Enable PROXY protocol v2 parsing for            ``False``
+                                                                 connections from trusted proxies.
+proxy_protocol_allowed_networks    N/A                           The CIDR networks allowed to send PROXY
+                                                                 protocol preambles. Connections from other
+                                                                 peers are rejected.
+proxy_protocol_max_header_size     N/A                           Maximum size of the PROXY protocol              1KiB
+                                                                 preamble in bytes.
+proxy_protocol_timeout             N/A                           Seconds to wait for the PROXY protocol          5s
+                                                                 preamble before closing the connection.
+quic_bind                          ``--quic-bind``               The UDP/QUIC host/address to bind to. See
+                                                                 *bind* for formatting options.
+root_path                          ``--root-path``               The setting for the ASGI root_path
+                                                                 variable.
+server_names                       ``--server-name``             The hostnames that can be served, requests
+                                                                 to different hosts will be responded to
+                                                                 with 404s.
+shutdown_timeout                   N/A                           Timeout when waiting for Lifespan               60s
+                                                                 shutdowns to complete.
+ssl_handshake_timeout              N/A                           Timeout when waiting for SSL handshakes to      60s
+                                                                 complete.
+startup_timeout                    N/A                           Timeout when waiting for Lifespan               60s
+                                                                 startups to complete.
+statsd_host                        ``--statsd-host``             The host:port of the statsd server.
+statsd_prefix                      ``--statsd-prefix``           Prefix for all statsd messages.
+umask                              ``-m``, ``--umask``           The permissions bit mask to use on any
+                                                                 unix sockets.
+use_reloader                       ``--reload``                  Enable automatic reloads on code changes.
+user                               ``-u``, ``--user``            User to own any unix sockets.
+verify_flags                       N/A                           SSL context verify flags.
+verify_mode                        ``--verify-mode``             SSL verify mode for peer's certificate,
+                                                                 see ssl.VerifyMode enum for possible
+                                                                 values.
+websocket_max_message_size         N/A                           Maximum size of a WebSocket frame.              16MiB
+websocket_ping_interval            ``--websocket-ping-interval`` If set this is the time in seconds between
+                                                                 pings sent to the client. This can be used
+                                                                 to keep the websocket connection alive.
+worker_class                       ``-k``, ``--worker-class``    The type of worker to use. Options include
+                                                                 asyncio, uvloop (pip install
+                                                                 hypercorn[uvloop]), and trio (pip install
+                                                                 hypercorn[trio]).
+workers                            ``-w``, ``--workers``         The number of workers to spawn and use.         1
+wsgi_max_body_size                 N/A                           The maximum size of a body that will be         16MiB
+                                                                 accepted in WSGI mode.
+================================== ============================= =============================================== ========================
+
+.. _proxy_protocol:
+
+PROXY protocol
+==============
+
+If Hypercorn is served behind a load balancer that terminates TCP (or
+TLS) connections, the connection's client and server addresses seen by
+Hypercorn are those of the load balancer. Load balancers such as
+HAProxy, AWS NLB, or nginx can prepend a `PROXY protocol
+<https://www.haproxy.org/download/1.8/doc/proxy-protocol.txt>`_ v2
+preamble to each connection carrying the original addresses. Hypercorn
+can parse this preamble before any TLS handshake or HTTP parsing takes
+place,
+
+.. code-block:: python
+
+    config = Config()
+    config.proxy_protocol = True
+    config.proxy_protocol_allowed_networks = ["10.0.0.0/8", "2001:db8::/32"]
+
+This is disabled by default and must be opted into. When enabled,
+only peers connecting from ``proxy_protocol_allowed_networks`` may
+send a preamble; connections from any other peer are closed
+immediately. If no networks are configured every connection is
+rejected, so the allowlist must be explicitly configured for the
+feature to work.
+
+For ``PROXY`` commands the ASGI scope's ``client`` and ``server``
+values are taken from the preamble, whilst ``LOCAL`` commands leave
+the real transport addresses untouched. Any TLVs in the preamble are
+parsed and retained on the connection. The original transport peer
+address is logged (at ``INFO`` level) whenever a preamble rewrites the
+addresses, keeping it traceable.
+
+The whole preamble is bounded by ``proxy_protocol_max_header_size``
+and must fully arrive within ``proxy_protocol_timeout``, after which
+the connection is closed. Untrusted peers, truncated preambles,
+oversized preambles, and unsupported address families are all rejected
+before any further processing.
+
+.. note::
+
+    With the asyncio worker, combining ``proxy_protocol`` with SSL
+    requires Python 3.11 or greater.

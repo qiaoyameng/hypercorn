@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import ipaddress
 import logging
 import os
 import socket
@@ -97,6 +98,10 @@ class Config:
     max_requests: int | None = None
     max_requests_jitter: int = 0
     pid_path: str | None = None
+    proxy_protocol: bool = False
+    proxy_protocol_allowed_networks: list[str] = []
+    proxy_protocol_max_header_size: int = 1024 * BYTES
+    proxy_protocol_timeout: float = 5 * SECONDS
     server_names: list[str] = []
     shutdown_timeout = 60 * SECONDS
     ssl_handshake_timeout = 60 * SECONDS
@@ -208,6 +213,18 @@ class Config:
             insecure_sockets = self._create_sockets(self.bind)
             quic_sockets = []
         return Sockets(secure_sockets, insecure_sockets, quic_sockets)
+
+    def is_proxy_protocol_allowed(self, peer: tuple[str, int] | None) -> bool:
+        if peer is None:
+            return False
+        try:
+            address = ipaddress.ip_address(peer[0])
+        except ValueError:
+            return False
+        for network in self.proxy_protocol_allowed_networks:
+            if address in ipaddress.ip_network(network, strict=False):
+                return True
+        return False
 
     def _set_quic_addresses(self, sockets: list[socket.socket]) -> None:
         self._quic_addresses = []

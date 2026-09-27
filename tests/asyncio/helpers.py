@@ -14,13 +14,28 @@ class MemoryReader:
     def __init__(self) -> None:
         self.data: asyncio.Queue = asyncio.Queue()
         self.eof = False
+        self.buffer = bytearray()
 
     async def send(self, data: bytes) -> None:
         if data != b"":
             await self.data.put(data)
 
     async def read(self, length: int) -> bytes:
+        if len(self.buffer) > 0:
+            data = bytes(self.buffer[:length])
+            del self.buffer[:length]
+            return data
         return await self.data.get()
+
+    async def readexactly(self, length: int) -> bytes:
+        while len(self.buffer) < length:
+            chunk = await self.data.get()
+            if chunk == b"":
+                raise asyncio.IncompleteReadError(bytes(self.buffer), length)
+            self.buffer.extend(chunk)
+        data = bytes(self.buffer[:length])
+        del self.buffer[:length]
+        return data
 
     def close(self) -> None:
         self.data.put_nowait(b"")

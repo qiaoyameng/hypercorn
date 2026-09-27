@@ -36,3 +36,10 @@ The ``trusted_hops`` argument should be set to the number of proxies
 that are chained in front of Hypercorn. You should set this to how
 many proxies are setting the headers so the middleware knows what to
 trust.
+
+.. note::
+
+    If the proxy can prepend a PROXY protocol v2 preamble to each
+    connection, the :ref:`proxy_protocol` configuration can be used
+    instead of this middleware. This restores the client and server
+    addresses at the connection level, before any HTTP parsing.

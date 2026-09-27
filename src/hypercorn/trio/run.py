@@ -60,13 +60,12 @@ async def worker_serve(
             listeners: list[trio.SSLListener[trio.SocketStream] | trio.SocketListener] = []
             binds = []
             for sock in sockets.secure_sockets:
-                listeners.append(
-                    trio.SSLListener(
-                        trio.SocketListener(trio.socket.from_stdlib_socket(sock)),
-                        ssl_context,
-                        https_compatible=True,
-                    )
+                listener: trio.SSLListener[trio.SocketStream] | trio.SocketListener = (
+                    trio.SocketListener(trio.socket.from_stdlib_socket(sock))
                 )
+                if not config.proxy_protocol:
+                    listener = trio.SSLListener(listener, ssl_context, https_compatible=True)
+                listeners.append(listener)
                 bind = repr_socket_addr(sock.family, sock.getsockname())
                 binds.append(f"https://{bind}")
                 await config.log.info(f"Running on https://{bind} (CTRL + C to quit)")
@@ -102,6 +101,7 @@ async def worker_serve(
                                 config,
                                 context,
                                 ConnectionState(lifespan_state.copy()),
+                                ssl_context=ssl_context if config.proxy_protocol else None,
                             ),
                             listeners,
                             handler_nursery=server_nursery,

@@ -10,6 +10,52 @@ from hypercorn.typing import ASGIReceiveCallable, ASGISendCallable, Scope, WWWSc
 
 SANITY_BODY = b"Hello Hypercorn"
 
+PROXY_V4_PREAMBLE = (
+    b"\r\n\r\n\x00\r\nQUIT\n"
+    + b"\x21\x11"
+    + (12).to_bytes(2, "big")
+    + bytes([203, 0, 113, 7])
+    + bytes([192, 0, 2, 1])
+    + (45678).to_bytes(2, "big")
+    + (443).to_bytes(2, "big")
+)
+PROXY_V6_PREAMBLE = (
+    b"\r\n\r\n\x00\r\nQUIT\n"
+    + b"\x21\x21"
+    + (36).to_bytes(2, "big")
+    + bytes.fromhex("20010db8000000000000000000000007")
+    + bytes.fromhex("20010db8000000000000000000000001")
+    + (45678).to_bytes(2, "big")
+    + (443).to_bytes(2, "big")
+)
+PROXY_LOCAL_PREAMBLE = b"\r\n\r\n\x00\r\nQUIT\n" + b"\x20\x00" + (0).to_bytes(2, "big")
+
+
+async def scope_framework(
+    scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable
+) -> None:
+    assert scope["type"] == "http"
+    while True:
+        event = await receive()
+        if event["type"] == "http.request" and not event.get("more_body", False):
+            www_scope = cast(WWWScope, scope)
+            body = dumps(
+                {
+                    "client": www_scope["client"],
+                    "server": www_scope["server"],
+                    "scheme": www_scope["scheme"],
+                }
+            ).encode()
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"content-length", str(len(body)).encode())],
+                }
+            )
+            await send({"type": "http.response.body", "body": body})
+            break
+
 
 class MockSocket:
     family = AF_INET

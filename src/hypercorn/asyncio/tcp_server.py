@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Generator
-from ssl import SSLError
+from ssl import SSLContext, SSLError
 from typing import Any
 
 from .task_group import TaskGroup
@@ -10,6 +10,14 @@ from .worker_context import AsyncioSingleTask, WorkerContext
 from ..config import Config
 from ..events import Closed, Event, RawData, Updated
 from ..protocol import ProtocolWrapper
+from ..proxy_protocol import (
+    COMMAND_PROXY,
+    FIXED_HEADER_LENGTH,
+    parse_proxy_v2_preamble,
+    preamble_length,
+    ProxyProtocolError,
+    ProxyProtocolInfo,
+)
 from ..typing import AppWrapper, ConnectionState, LifespanState
 from ..utils import parse_socket_addr
 
@@ -26,6 +34,7 @@ class TCPServer:
         state: LifespanState,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
+        ssl_context: SSLContext | None = None,
     ) -> None:
         self.app = app
         self.config = config
@@ -35,6 +44,7 @@ class TCPServer:
         self.reader = reader
         self.writer = writer
         self.send_lock = asyncio.Lock()
+        self.ssl_context = ssl_context
         self.state = state
         self.idle_task = AsyncioSingleTask()
 
@@ -46,6 +56,26 @@ class TCPServer:
         try:
             client = parse_socket_addr(socket.family, socket.getpeername())
             server = parse_socket_addr(socket.family, socket.getsockname())
+            if self.config.proxy_protocol:
+                info = await self._read_proxy_protocol(client)
+                if info is None:
+                    return
+                if info.command == COMMAND_PROXY:
+                    await self.config.log.info(
+                        "PROXY protocol: trusted proxy %s forwarded client %s (server %s)",
+                        client,
+                        info.client,
+                        info.server,
+                    )
+                    client, server = info.client, info.server
+                if self.ssl_context is not None:
+                    try:
+                        await self.writer.start_tls(
+                            self.ssl_context,
+                            ssl_handshake_timeout=self.config.ssl_handshake_timeout,
+                        )
+                    except (OSError, asyncio.TimeoutError, TimeoutError):
+                        return  # Handshake failed
             ssl_object = self.writer.get_extra_info("ssl_object")
             if ssl_object is not None:
                 ssl = True
@@ -75,6 +105,34 @@ class TCPServer:
             pass
         finally:
             await self._close()
+
+    async def _read_proxy_protocol(
+        self, client: tuple[str, int] | None
+    ) -> ProxyProtocolInfo | None:
+        if not self.config.is_proxy_protocol_allowed(client):
+            await self.config.log.warning("PROXY protocol: rejected untrusted peer %s", client)
+            return None
+
+        async def read_preamble() -> bytes:
+            fixed_header = await self.reader.readexactly(FIXED_HEADER_LENGTH)
+            total_length = preamble_length(fixed_header)
+            if total_length > self.config.proxy_protocol_max_header_size:
+                raise ProxyProtocolError("PROXY protocol preamble is too large")
+            return fixed_header + await self.reader.readexactly(total_length - FIXED_HEADER_LENGTH)
+
+        try:
+            preamble = await asyncio.wait_for(read_preamble(), self.config.proxy_protocol_timeout)
+            return parse_proxy_v2_preamble(preamble)
+        except (
+            ProxyProtocolError,
+            asyncio.IncompleteReadError,
+            asyncio.TimeoutError,
+            TimeoutError,
+            ConnectionError,
+            OSError,
+        ) as error:
+            await self.config.log.warning("PROXY protocol: rejected %s, %s", client, error)
+            return None
 
     async def protocol_send(self, event: Event) -> None:
         if isinstance(event, RawData):
