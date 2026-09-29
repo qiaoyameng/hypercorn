@@ -1,3 +1,10 @@
+Unreleased
+----------
+
+* Add an opt-in ``http.connect`` ASGI extension allowing apps to
+  accept CONNECT requests and tunnel raw bytes in both directions
+  (HTTP/1.1 and HTTP/2), or reject them with a plain HTTP response.
+
 0.18.0 2025-11-08
 -----------------
 

@@ -113,6 +113,24 @@ class HTTPDisconnectEvent(TypedDict):
     type: Literal["http.disconnect"]
 
 
+class HTTPConnectAcceptEvent(TypedDict):
+    type: Literal["http.connect.accept"]
+    status: NotRequired[int]
+    headers: NotRequired[Iterable[tuple[bytes, bytes]]]
+
+
+class HTTPConnectReceiveEvent(TypedDict):
+    type: Literal["http.connect.receive"]
+    body: bytes
+    more_body: NotRequired[bool]
+
+
+class HTTPConnectSendEvent(TypedDict):
+    type: Literal["http.connect.send"]
+    body: bytes
+    more_body: NotRequired[bool]
+
+
 class WebsocketConnectEvent(TypedDict):
     type: Literal["websocket.connect"]
 
@@ -187,6 +205,7 @@ class LifespanShutdownFailedEvent(TypedDict):
 ASGIReceiveEvent = (
     HTTPRequestEvent
     | HTTPDisconnectEvent
+    | HTTPConnectReceiveEvent
     | WebsocketConnectEvent
     | WebsocketReceiveEvent
     | WebsocketDisconnectEvent
@@ -201,6 +220,8 @@ ASGISendEvent = (
     | HTTPServerPushEvent
     | HTTPEarlyHintEvent
     | HTTPDisconnectEvent
+    | HTTPConnectAcceptEvent
+    | HTTPConnectSendEvent
     | WebsocketAcceptEvent
     | WebsocketSendEvent
     | WebsocketResponseStartEvent

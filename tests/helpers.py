@@ -107,3 +107,57 @@ async def sanity_framework(
         elif event["type"] == "websocket.receive":
             assert event["bytes"] == SANITY_BODY
             await send({"type": "websocket.send", "text": "Hello & Goodbye"})  # type: ignore
+
+
+class ConnectEchoFramework:
+    # An in-app echo endpoint for the http.connect extension. It
+    # rejects requests whose host starts with "reject" with a plain
+    # HTTP response, accepts any other CONNECT request and echoes the
+    # tunnelled bytes back. Plain HTTP requests are answered normally.
+    def __init__(self) -> None:
+        self.disconnected = False
+
+    async def __call__(
+        self, scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable
+    ) -> None:
+        if scope["type"] != "http":
+            return
+        if "http.connect" not in scope["extensions"]:
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"content-length", b"2")],
+                }
+            )
+            await send({"type": "http.response.body", "body": b"ok", "more_body": False})
+            return
+
+        headers = dict(scope["headers"])
+        if headers.get(b"host", b"").startswith(b"reject"):
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 403,
+                    "headers": [(b"content-length", b"7")],
+                }
+            )
+            await send({"type": "http.response.body", "body": b"denied!", "more_body": False})
+            return
+
+        await send({"type": "http.connect.accept", "status": 200, "headers": []})
+        while True:
+            event = await receive()
+            if event["type"] == "http.connect.receive":
+                await send(
+                    {
+                        "type": "http.connect.send",
+                        "body": event["body"],
+                        "more_body": event.get("more_body", False),
+                    }
+                )
+                if not event.get("more_body", False):
+                    break
+            elif event["type"] == "http.disconnect":
+                self.disconnected = True
+                break

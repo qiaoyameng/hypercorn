@@ -17,10 +17,11 @@ from .events import (
     Response,
     StreamClosed,
 )
+from .connect_stream import ConnectStream
 from .http_stream import HTTPStream
 from .ws_stream import WSStream
 from ..config import Config
-from ..events import Closed, Event, RawData, Updated
+from ..events import Closed, Event, RawData, ReadClosed, Updated, WriteClosed
 from ..typing import AppWrapper, ConnectionState, H11SendableEvent, TaskGroup, WorkerContext
 
 STREAM_ID = 1
@@ -78,6 +79,12 @@ class H11WSConnection:
         pass
 
 
+class H11ConnectConnection(H11WSConnection):
+    # Once a CONNECT tunnel is established the connection simply
+    # passes raw data through without any HTTP framing.
+    pass
+
+
 class H11Protocol:
     def __init__(
         self,
@@ -103,7 +110,7 @@ class H11Protocol:
         self.send = send
         self.server = server
         self.ssl = ssl
-        self.stream: HTTPStream | WSStream | None = None
+        self.stream: ConnectStream | HTTPStream | WSStream | None = None
         self.task_group = task_group
         self.connection_state = connection_state
 
@@ -116,6 +123,13 @@ class H11Protocol:
             await self._handle_events()
         elif isinstance(event, Closed):
             if self.stream is not None:
+                await self._close_stream()
+        elif isinstance(event, ReadClosed):
+            if isinstance(self.stream, ConnectStream) and self.stream.accepted:
+                # The client has half-closed the tunnel, data can
+                # still be sent in the server to client direction.
+                await self.stream.handle(EndData(stream_id=STREAM_ID))
+            else:
                 await self._close_stream()
 
     async def stream_send(self, event: StreamEvent) -> None:
@@ -130,6 +144,13 @@ class H11Protocol:
                         status_code=event.status_code,
                     )
                 )
+                if isinstance(self.stream, ConnectStream) and event.status_code < 300:
+                    # The tunnel is established, switch the connection
+                    # to raw pass through and resume reading.
+                    self.connection = H11ConnectConnection(
+                        cast(h11.Connection, self.connection)
+                    )
+                    await self.can_read.set()
             else:
                 await self._send_h11_event(
                     h11.InformationalResponse(
@@ -146,7 +167,10 @@ class H11Protocol:
         elif isinstance(event, Data):
             await self.send(RawData(data=event.data))
         elif isinstance(event, EndData):
-            pass
+            if isinstance(self.stream, ConnectStream):
+                # Half-close the server to client direction of the
+                # tunnel, whilst continuing to read.
+                await self.send(WriteClosed())
         elif isinstance(event, StreamClosed):
             await self._maybe_recycle()
 
@@ -214,6 +238,18 @@ class H11Protocol:
                 STREAM_ID,
             )
             self.connection = H11WSConnection(cast(h11.Connection, self.connection))
+        elif request.method == b"CONNECT":
+            self.stream = ConnectStream(
+                self.app,
+                self.config,
+                self.context,
+                self.task_group,
+                self.ssl,
+                self.client,
+                self.server,
+                self.stream_send,
+                STREAM_ID,
+            )
         else:
             self.stream = HTTPStream(
                 self.app,

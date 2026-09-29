@@ -20,10 +20,11 @@ from .events import (
     StreamClosed,
     Trailers,
 )
+from .connect_stream import ConnectStream
 from .http_stream import HTTPStream
 from .ws_stream import WSStream
 from ..config import Config
-from ..events import Closed, Event, RawData, Updated
+from ..events import Closed, Event, RawData, ReadClosed, Updated
 from ..typing import AppWrapper, ConnectionState, Event as IOEvent, TaskGroup, WorkerContext
 from ..utils import filter_pseudo_headers
 
@@ -116,7 +117,7 @@ class H2Protocol:
         self.send = send
         self.server = server
         self.ssl = ssl
-        self.streams: dict[int, HTTPStream | WSStream] = {}
+        self.streams: dict[int, ConnectStream | HTTPStream | WSStream] = {}
         # The below are used by the sending task
         self.has_data = self.context.event_class()
         self.priority = priority.PriorityTree()
@@ -194,6 +195,13 @@ class H2Protocol:
             for stream_id in stream_ids:
                 await self._close_stream(stream_id)
             await self.has_data.set()
+        elif isinstance(event, ReadClosed):
+            # Clean EOF from the client, nothing more can be received
+            self.closed = True
+            stream_ids = list(self.streams.keys())
+            for stream_id in stream_ids:
+                await self._close_stream(stream_id)
+            await self.has_data.set()
 
     async def stream_send(self, event: StreamEvent) -> None:
         try:
@@ -264,11 +272,17 @@ class H2Protocol:
                 )
             elif isinstance(event, h2.events.StreamEnded):
                 try:
-                    await self.streams[event.stream_id].handle(EndBody(stream_id=event.stream_id))
+                    stream = self.streams[event.stream_id]
                 except KeyError:
                     # Response sent before full request received,
                     # nothing to do already closed.
                     pass
+                else:
+                    if isinstance(stream, ConnectStream):
+                        # The client has half-closed the tunnel
+                        await stream.handle(EndData(stream_id=event.stream_id))
+                    else:
+                        await stream.handle(EndBody(stream_id=event.stream_id))
             elif isinstance(event, h2.events.StreamReset):
                 await self._close_stream(event.stream_id)
                 await self._window_updated(event.stream_id)
@@ -317,14 +331,32 @@ class H2Protocol:
         await self.has_data.set()
 
     async def _create_stream(self, request: h2.events.RequestReceived) -> None:
+        method = ""
+        raw_path = b""
+        protocol = b""
         for name, value in request.headers:
             if name == b":method":
                 method = value.decode("ascii").upper()
             elif name == b":path":
                 raw_path = value
+            elif name == b":protocol":
+                protocol = value
 
-        if method == "CONNECT":
+        if method == "CONNECT" and protocol == b"websocket":
+            # RFC 8441 extended CONNECT, a WebSocket tunnel
             self.streams[request.stream_id] = WSStream(
+                self.app,
+                self.config,
+                self.context,
+                self.task_group,
+                self.ssl,
+                self.client,
+                self.server,
+                self.stream_send,
+                request.stream_id,
+            )
+        elif method == "CONNECT":
+            self.streams[request.stream_id] = ConnectStream(
                 self.app,
                 self.config,
                 self.context,

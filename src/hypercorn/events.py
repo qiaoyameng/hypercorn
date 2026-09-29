@@ -20,5 +20,19 @@ class Closed(Event):
 
 
 @dataclass(frozen=True)
+class ReadClosed(Event):
+    # The client has half-closed the connection (clean EOF), no more
+    # data can be received but data can still be sent.
+    pass
+
+
+@dataclass(frozen=True)
+class WriteClosed(Event):
+    # Half-close the sending direction of the connection, whilst
+    # continuing to read any incoming data.
+    pass
+
+
+@dataclass(frozen=True)
 class Updated(Event):
     idle: bool

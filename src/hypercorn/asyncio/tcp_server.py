@@ -8,7 +8,7 @@ from typing import Any
 from .task_group import TaskGroup
 from .worker_context import AsyncioSingleTask, WorkerContext
 from ..config import Config
-from ..events import Closed, Event, RawData, Updated
+from ..events import Closed, Event, RawData, ReadClosed, Updated, WriteClosed
 from ..protocol import ProtocolWrapper
 from ..typing import AppWrapper, ConnectionState, LifespanState
 from ..utils import parse_socket_addr
@@ -86,6 +86,13 @@ class TCPServer:
                     await self.protocol.handle(Closed())
         elif isinstance(event, Closed):
             await self._close()
+        elif isinstance(event, WriteClosed):
+            # Half-close the sending direction, keeping the read
+            # direction open (e.g. a CONNECT tunnel).
+            try:
+                self.writer.write_eof()
+            except (NotImplementedError, OSError, RuntimeError):
+                pass  # Likely SSL connection
         elif isinstance(event, Updated):
             if event.idle:
                 await self.idle_task.restart(self._task_group, self._idle_timeout)
@@ -105,6 +112,13 @@ class TCPServer:
             ):
                 break
             else:
+                if data == b"":
+                    # The client has half-closed the connection, the
+                    # app can keep sending (e.g. a CONNECT tunnel)
+                    # with the connection closing once it finishes.
+                    await self.protocol.handle(RawData(data))
+                    await self.protocol.handle(ReadClosed())
+                    return
                 await self.protocol.handle(RawData(data))
 
         await self.protocol.handle(Closed())

@@ -206,6 +206,7 @@ async def test_http2_websocket() -> None:
             (":path", "/"),
             (":authority", "hypercorn"),
             (":scheme", "https"),
+            (":protocol", "websocket"),
             ("sec-websocket-version", "13"),
         ],
     )
