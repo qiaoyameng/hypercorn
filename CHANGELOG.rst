@@ -1,3 +1,10 @@
+Unreleased
+----------
+
+* Support the ASGI ``http.response.pathsend`` extension for HTTP/1.1,
+  sending the file via sendfile where the protocol and transport allow
+  it and bounded chunks otherwise.
+
 0.18.0 2025-11-08
 -----------------
 

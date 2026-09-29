@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Awaitable, Callable
 from itertools import chain
-from typing import cast
+from typing import BinaryIO, cast
 
 import h11
 
@@ -12,6 +13,7 @@ from .events import (
     EndBody,
     EndData,
     Event as StreamEvent,
+    FilePath,
     InformationalResponse,
     Request,
     Response,
@@ -20,10 +22,21 @@ from .events import (
 from .http_stream import HTTPStream
 from .ws_stream import WSStream
 from ..config import Config
-from ..events import Closed, Event, RawData, Updated
+from ..events import Closed, Event, RawData, SendFile, Updated
 from ..typing import AppWrapper, ConnectionState, H11SendableEvent, TaskGroup, WorkerContext
 
 STREAM_ID = 1
+
+
+class FilePlaceholder:
+    # A placeholder for a file's contents, allowing h11 to track the
+    # response framing whilst the file itself is sent separately
+    # (ideally via sendfile). See the h11 sendfile documentation.
+    def __init__(self, size: int) -> None:
+        self.size = size
+
+    def __len__(self) -> int:
+        return self.size
 
 
 class H2CProtocolRequiredError(Exception):
@@ -143,6 +156,8 @@ class H11Protocol:
             await self._send_h11_event(h11.Data(data=event.data))
         elif isinstance(event, EndBody):
             await self._send_h11_event(h11.EndOfMessage())
+        elif isinstance(event, FilePath):
+            await self._send_file(event.file)
         elif isinstance(event, Data):
             await self.send(RawData(data=event.data))
         elif isinstance(event, EndData):
@@ -253,6 +268,25 @@ class H11Protocol:
                 raise
         else:
             await self.send(RawData(data=data))
+
+    async def _send_file(self, file: BinaryIO) -> None:
+        file_size = os.fstat(file.fileno()).st_size
+        placeholder = FilePlaceholder(file_size)
+        connection = cast(h11.Connection, self.connection)
+        try:
+            data_list = connection.send_with_data_passthrough(
+                h11.Data(data=placeholder)  # type: ignore[arg-type]
+            )
+        except h11.LocalProtocolError:
+            if connection.their_state != h11.ERROR:
+                raise
+            return
+        for data in data_list or []:
+            if isinstance(data, FilePlaceholder):
+                if data.size > 0:
+                    await self.send(SendFile(file=file))
+            else:
+                await self.send(RawData(data=data))
 
     async def _send_error_response(self, status_code: int) -> None:
         await self._send_h11_event(

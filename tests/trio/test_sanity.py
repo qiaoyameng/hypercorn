@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import cast
 from unittest.mock import AsyncMock, Mock, PropertyMock
 
@@ -8,12 +9,21 @@ import h11
 import pytest
 import trio
 import wsproto
+from _pytest.monkeypatch import MonkeyPatch
 
+import hypercorn.protocol.http_stream
 from hypercorn.app_wrappers import ASGIWrapper
 from hypercorn.config import Config
 from hypercorn.trio.tcp_server import TCPServer
 from hypercorn.trio.worker_context import WorkerContext
-from ..helpers import MockSocket, SANITY_BODY, sanity_framework
+from hypercorn.typing import ASGIReceiveCallable, ASGISendCallable, Scope
+from ..helpers import (
+    BoundedReadFile,
+    bounded_open_factory,
+    MockSocket,
+    SANITY_BODY,
+    sanity_framework,
+)
 
 
 @pytest.mark.trio
@@ -68,6 +78,79 @@ async def test_http1_request(nursery: trio._core._run.Nursery) -> None:
         h11.Data(data=b"Hello & Goodbye"),
         h11.EndOfMessage(headers=[]),
     ]
+
+
+@pytest.mark.trio
+async def test_http1_pathsend(
+    nursery: trio._core._run.Nursery, tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    body = b"x" * (3 * 2**16 + 5)
+    file_path = tmp_path / "asset.bin"
+    file_path.write_bytes(body)
+    opened: list[BoundedReadFile] = []
+    monkeypatch.setattr(
+        hypercorn.protocol.http_stream,
+        "open",
+        bounded_open_factory(str(file_path), opened),
+        raising=False,
+    )
+
+    async def app(scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable) -> None:
+        assert "http.response.pathsend" in scope["extensions"]  # type: ignore
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-length", str(len(body)).encode())],
+            }
+        )
+        await send({"type": "http.response.pathsend", "path": str(file_path)})
+
+    client_stream, server_stream = trio.testing.memory_stream_pair()
+    server_stream = cast("trio.SSLStream[trio.SocketStream]", server_stream)
+    server_stream.socket = MockSocket()
+    server = TCPServer(ASGIWrapper(app), Config(), WorkerContext(None), {}, server_stream)
+    nursery.start_soon(server.run)
+    client = h11.Connection(h11.CLIENT)
+    await client_stream.send_all(
+        client.send(
+            h11.Request(
+                method="GET",
+                target="/",
+                headers=[(b"host", b"hypercorn"), (b"connection", b"close")],
+            )
+        )
+    )
+    events = []
+    while True:
+        event = client.next_event()
+        if event == h11.NEED_DATA:
+            # bytes cast is key otherwise b"" is lost
+            data = bytes(await client_stream.receive_some(1024))
+            client.receive_data(data)
+        elif isinstance(event, h11.ConnectionClosed):
+            break
+        else:
+            events.append(event)
+
+    assert events[0] == h11.Response(
+        status_code=200,
+        headers=[
+            (b"content-length", b"%d" % len(body)),
+            (b"date", b"Thu, 01 Jan 1970 01:23:20 GMT"),
+            (b"server", b"hypercorn-h11"),
+            (b"connection", b"close"),
+        ],
+        http_version=b"1.1",
+        reason=b"",
+    )
+    received_body = b"".join(event.data for event in events if isinstance(event, h11.Data))
+    assert received_body == body
+    assert isinstance(events[-1], h11.EndOfMessage)
+    # The fallback path must read the file in bounded chunks, never whole
+    assert len(opened) == 1
+    assert len(opened[0].read_sizes) > 1
+    assert max(opened[0].read_sizes) <= 2**16
 
 
 @pytest.mark.trio

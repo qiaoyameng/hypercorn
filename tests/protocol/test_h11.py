@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, call, Mock
 
@@ -12,8 +13,17 @@ from _pytest.monkeypatch import MonkeyPatch
 import hypercorn.protocol.h11
 from hypercorn.asyncio.worker_context import EventWrapper
 from hypercorn.config import Config
-from hypercorn.events import Closed, RawData, Updated
-from hypercorn.protocol.events import Body, Data, EndBody, EndData, Request, Response, StreamClosed
+from hypercorn.events import Closed, RawData, SendFile, Updated
+from hypercorn.protocol.events import (
+    Body,
+    Data,
+    EndBody,
+    EndData,
+    FilePath,
+    Request,
+    Response,
+    StreamClosed,
+)
 from hypercorn.protocol.h11 import H2CProtocolRequiredError, H2ProtocolAssumedError, H11Protocol
 from hypercorn.protocol.http_stream import HTTPStream
 from hypercorn.typing import ConnectionState, Event as IOEvent
@@ -59,6 +69,60 @@ async def test_protocol_send_response(protocol: H11Protocol) -> None:
             )
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_protocol_send_file_path(protocol: H11Protocol, tmp_path: Path) -> None:
+    file_path = tmp_path / "file.txt"
+    file_path.write_bytes(b"Hello!")
+    await protocol.stream_send(
+        Response(stream_id=1, status_code=200, headers=[(b"content-length", b"6")])
+    )
+    with open(file_path, "rb") as file:
+        await protocol.stream_send(FilePath(stream_id=1, file=file))
+        await protocol.stream_send(EndBody(stream_id=1))
+        assert protocol.send.call_args_list == [  # type: ignore
+            call(
+                RawData(
+                    data=(
+                        b"HTTP/1.1 200 \r\ncontent-length: 6\r\n"
+                        b"date: Thu, 01 Jan 1970 01:23:20 GMT\r\n"
+                        b"server: hypercorn-h11\r\n\r\n"
+                    )
+                )
+            ),
+            call(SendFile(file=file)),
+            call(RawData(data=b"")),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_protocol_send_file_path_chunked(protocol: H11Protocol, tmp_path: Path) -> None:
+    file_path = tmp_path / "file.txt"
+    file_path.write_bytes(b"Hello!")
+    protocol.connection.receive_data(b"GET / HTTP/1.1\r\nHost: hypercorn\r\n\r\n")
+    protocol.connection.next_event()  # h11.Request
+    protocol.connection.next_event()  # h11.EndOfMessage
+    await protocol.stream_send(
+        Response(stream_id=1, status_code=200, headers=[(b"transfer-encoding", b"chunked")])
+    )
+    with open(file_path, "rb") as file:
+        await protocol.stream_send(FilePath(stream_id=1, file=file))
+        await protocol.stream_send(EndBody(stream_id=1))
+        assert protocol.send.call_args_list == [  # type: ignore
+            call(
+                RawData(
+                    data=(
+                        b"HTTP/1.1 200 \r\ndate: Thu, 01 Jan 1970 01:23:20 GMT\r\n"
+                        b"server: hypercorn-h11\r\nTransfer-Encoding: chunked\r\n\r\n"
+                    )
+                )
+            ),
+            call(RawData(data=b"6\r\n")),
+            call(SendFile(file=file)),
+            call(RawData(data=b"\r\n")),
+            call(RawData(data=b"0\r\n\r\n")),
+        ]
 
 
 @pytest.mark.asyncio

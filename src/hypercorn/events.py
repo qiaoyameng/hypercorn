@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC
 from dataclasses import dataclass
+from typing import BinaryIO
 
 
 class Event(ABC):
@@ -22,3 +23,8 @@ class Closed(Event):
 @dataclass(frozen=True)
 class Updated(Event):
     idle: bool
+
+
+@dataclass(frozen=True)
+class SendFile(Event):
+    file: BinaryIO

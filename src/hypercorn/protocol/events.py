@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import BinaryIO
 
 from hypercorn.typing import ConnectionState
 
@@ -27,6 +28,11 @@ class Body(Event):
 @dataclass(frozen=True)
 class EndBody(Event):
     pass
+
+
+@dataclass(frozen=True)
+class FilePath(Event):
+    file: BinaryIO
 
 
 @dataclass(frozen=True)

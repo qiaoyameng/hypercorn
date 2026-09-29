@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, cast
-from unittest.mock import AsyncMock, call
+from unittest.mock import ANY, AsyncMock, call
 
 import pytest
 import pytest_asyncio
@@ -13,6 +14,7 @@ from hypercorn.logging import Logger
 from hypercorn.protocol.events import (
     Body,
     EndBody,
+    FilePath,
     InformationalResponse,
     Request,
     Response,
@@ -23,6 +25,7 @@ from hypercorn.protocol.http_stream import ASGIHTTPState, HTTPStream
 from hypercorn.typing import (
     ConnectionState,
     HTTPResponseBodyEvent,
+    HTTPResponsePathSendEvent,
     HTTPResponseStartEvent,
     HTTPScope,
 )
@@ -67,7 +70,7 @@ async def test_handle_request_http_1(stream: HTTPStream, http_version: str) -> N
         "headers": [],
         "client": None,
         "server": None,
-        "extensions": {},
+        "extensions": {"http.response.pathsend": {}},
         "state": ConnectionState({}),
     }
 
@@ -172,6 +175,204 @@ async def test_send_response(stream: HTTPStream) -> None:
         call(StreamClosed(stream_id=1)),
     ]
     stream.config._log.access.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_send_pathsend(stream: HTTPStream, tmp_path: Path) -> None:
+    file_path = tmp_path / "page.html"
+    file_path.write_bytes(b"<html></html>")
+    await stream.handle(
+        Request(
+            stream_id=1,
+            http_version="1.1",
+            headers=[],
+            raw_path=b"/",
+            method="GET",
+            state=ConnectionState({}),
+        )
+    )
+    await stream.app_send(
+        cast(
+            HTTPResponseStartEvent,
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-length", b"13")],
+            },
+        )
+    )
+    await stream.app_send(
+        cast(
+            HTTPResponsePathSendEvent,
+            {"type": "http.response.pathsend", "path": str(file_path)},
+        )
+    )
+    assert stream.state == ASGIHTTPState.CLOSED
+    assert stream.send.call_args_list == [  # type: ignore
+        call(Response(stream_id=1, headers=[(b"content-length", b"13")], status_code=200)),
+        call(FilePath(stream_id=1, file=ANY)),
+        call(EndBody(stream_id=1)),
+        call(StreamClosed(stream_id=1)),
+    ]
+    # The server must close the file it opened
+    sent_file = stream.send.call_args_list[1][0][0].file  # type: ignore
+    assert sent_file.closed
+    stream.config._log.access.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_send_pathsend_head_request(stream: HTTPStream, tmp_path: Path) -> None:
+    file_path = tmp_path / "page.html"
+    file_path.write_bytes(b"<html></html>")
+    await stream.handle(
+        Request(
+            stream_id=1,
+            http_version="1.1",
+            headers=[],
+            raw_path=b"/",
+            method="HEAD",
+            state=ConnectionState({}),
+        )
+    )
+    await stream.app_send(
+        cast(HTTPResponseStartEvent, {"type": "http.response.start", "status": 200, "headers": []})
+    )
+    await stream.app_send(
+        cast(
+            HTTPResponsePathSendEvent,
+            {"type": "http.response.pathsend", "path": str(file_path)},
+        )
+    )
+    assert stream.state == ASGIHTTPState.CLOSED
+    # No file is opened nor sent for a HEAD request
+    assert stream.send.call_args_list == [  # type: ignore
+        call(Response(stream_id=1, headers=[], status_code=200)),
+        call(EndBody(stream_id=1)),
+        call(StreamClosed(stream_id=1)),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_send_pathsend_after_body(stream: HTTPStream, tmp_path: Path) -> None:
+    file_path = tmp_path / "page.html"
+    file_path.write_bytes(b"<html></html>")
+    await stream.handle(
+        Request(
+            stream_id=1,
+            http_version="1.1",
+            headers=[],
+            raw_path=b"/",
+            method="GET",
+            state=ConnectionState({}),
+        )
+    )
+    await stream.app_send(
+        cast(HTTPResponseStartEvent, {"type": "http.response.start", "status": 200, "headers": []})
+    )
+    await stream.app_send(
+        cast(
+            HTTPResponseBodyEvent,
+            {"type": "http.response.body", "body": b"Body", "more_body": True},
+        )
+    )
+    with pytest.raises(UnexpectedMessageError):
+        await stream.app_send(
+            cast(
+                HTTPResponsePathSendEvent,
+                {"type": "http.response.pathsend", "path": str(file_path)},
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_send_pathsend_http_2(stream: HTTPStream, tmp_path: Path) -> None:
+    # The extension is not declared for HTTP/2, so the message must be
+    # rejected.
+    file_path = tmp_path / "page.html"
+    file_path.write_bytes(b"<html></html>")
+    await stream.handle(
+        Request(
+            stream_id=1,
+            http_version="2",
+            headers=[],
+            raw_path=b"/",
+            method="GET",
+            state=ConnectionState({}),
+        )
+    )
+    await stream.app_send(
+        cast(HTTPResponseStartEvent, {"type": "http.response.start", "status": 200, "headers": []})
+    )
+    with pytest.raises(UnexpectedMessageError):
+        await stream.app_send(
+            cast(
+                HTTPResponsePathSendEvent,
+                {"type": "http.response.pathsend", "path": str(file_path)},
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_send_pathsend_content_length_mismatch(
+    stream: HTTPStream, tmp_path: Path
+) -> None:
+    file_path = tmp_path / "page.html"
+    file_path.write_bytes(b"<html></html>")
+    await stream.handle(
+        Request(
+            stream_id=1,
+            http_version="1.1",
+            headers=[],
+            raw_path=b"/",
+            method="GET",
+            state=ConnectionState({}),
+        )
+    )
+    await stream.app_send(
+        cast(
+            HTTPResponseStartEvent,
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-length", b"10")],
+            },
+        )
+    )
+    with pytest.raises(ValueError):
+        await stream.app_send(
+            cast(
+                HTTPResponsePathSendEvent,
+                {"type": "http.response.pathsend", "path": str(file_path)},
+            )
+        )
+    # No file data may be sent after the mismatch is detected
+    assert stream.send.call_args_list == [  # type: ignore
+        call(Response(stream_id=1, headers=[(b"content-length", b"10")], status_code=200))
+    ]
+
+
+@pytest.mark.asyncio
+async def test_send_pathsend_missing_file(stream: HTTPStream, tmp_path: Path) -> None:
+    await stream.handle(
+        Request(
+            stream_id=1,
+            http_version="1.1",
+            headers=[],
+            raw_path=b"/",
+            method="GET",
+            state=ConnectionState({}),
+        )
+    )
+    await stream.app_send(
+        cast(HTTPResponseStartEvent, {"type": "http.response.start", "status": 200, "headers": []})
+    )
+    with pytest.raises(OSError):
+        await stream.app_send(
+            cast(
+                HTTPResponsePathSendEvent,
+                {"type": "http.response.pathsend", "path": str(tmp_path / "missing.html")},
+            )
+        )
 
 
 @pytest.mark.asyncio

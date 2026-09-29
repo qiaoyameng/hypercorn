@@ -2,19 +2,20 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from math import inf
-from typing import Any
+from typing import Any, BinaryIO
 
 import trio
 
 from .task_group import TaskGroup
 from .worker_context import TrioSingleTask, WorkerContext
 from ..config import Config
-from ..events import Closed, Event, RawData, Updated
+from ..events import Closed, Event, RawData, SendFile, Updated
 from ..protocol import ProtocolWrapper
 from ..typing import AppWrapper, ConnectionState, LifespanState
 from ..utils import parse_socket_addr
 
 MAX_RECV = 2**16
+MAX_SEND = 2**16
 
 
 class TCPServer:
@@ -88,6 +89,9 @@ class TCPServer:
                         await self.stream.send_all(event.data)
                 except (trio.BrokenResourceError, trio.ClosedResourceError):
                     await self.protocol.handle(Closed())
+        elif isinstance(event, SendFile):
+            async with self.send_lock:
+                await self._send_file(event.file)
         elif isinstance(event, Closed):
             await self._close()
             await self.protocol.handle(Closed())
@@ -96,6 +100,19 @@ class TCPServer:
                 await self.idle_task.restart(self._task_group, self._idle_timeout)
             else:
                 await self.idle_task.stop()
+
+    async def _send_file(self, file: BinaryIO) -> None:
+        try:
+            while True:
+                chunk = file.read(MAX_SEND)
+                if chunk == b"":
+                    break
+                with trio.CancelScope() as cancel_scope:
+                    cancel_scope.shield = True
+                    await self.stream.send_all(chunk)
+        except (trio.BrokenResourceError, trio.ClosedResourceError):
+            # The client has likely disconnected
+            await self.protocol.handle(Closed())
 
     async def _read_data(self) -> None:
         while True:

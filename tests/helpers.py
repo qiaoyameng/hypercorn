@@ -1,14 +1,50 @@
 from __future__ import annotations
 
+import builtins
 from collections.abc import Callable
 from copy import deepcopy
 from json import dumps
 from socket import AF_INET
-from typing import cast
+from typing import BinaryIO, cast
 
 from hypercorn.typing import ASGIReceiveCallable, ASGISendCallable, Scope, WWWScope
 
 SANITY_BODY = b"Hello Hypercorn"
+
+
+class BoundedReadFile:
+    # A stand-in for a file object that disallows whole-file reads,
+    # thereby ensuring the server reads bounded chunks only.
+    def __init__(self, path: str) -> None:
+        self._file = builtins.open(path, "rb")
+        self.read_sizes: list[int] = []
+
+    def read(self, size: int = -1) -> bytes:
+        if size is None or size < 0:
+            raise AssertionError("Whole-file reads are not allowed")
+        self.read_sizes.append(size)
+        return self._file.read(size)
+
+    def fileno(self) -> int:
+        return self._file.fileno()
+
+    def close(self) -> None:
+        self._file.close()
+
+
+def bounded_open_factory(path: str, opened: list[BoundedReadFile]) -> Callable:
+    # Returns an open replacement that yields BoundedReadFile
+    # stand-ins for the given path only.
+    real_open = builtins.open
+
+    def fake_open(file: str, mode: str = "r", *args, **kwargs) -> BinaryIO:  # type: ignore
+        if str(file) == path and mode == "rb":
+            stand_in = BoundedReadFile(path)
+            opened.append(stand_in)
+            return cast(BinaryIO, stand_in)
+        return real_open(file, mode, *args, **kwargs)
+
+    return fake_open
 
 
 class MockSocket:

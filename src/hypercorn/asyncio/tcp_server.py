@@ -3,17 +3,18 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Generator
 from ssl import SSLError
-from typing import Any
+from typing import Any, BinaryIO
 
 from .task_group import TaskGroup
 from .worker_context import AsyncioSingleTask, WorkerContext
 from ..config import Config
-from ..events import Closed, Event, RawData, Updated
+from ..events import Closed, Event, RawData, SendFile, Updated
 from ..protocol import ProtocolWrapper
 from ..typing import AppWrapper, ConnectionState, LifespanState
 from ..utils import parse_socket_addr
 
 MAX_RECV = 2**16
+MAX_SEND = 2**16
 
 
 class TCPServer:
@@ -84,6 +85,9 @@ class TCPServer:
                     await self.writer.drain()
                 except (ConnectionError, RuntimeError):
                     await self.protocol.handle(Closed())
+        elif isinstance(event, SendFile):
+            async with self.send_lock:
+                await self._send_file(event.file)
         elif isinstance(event, Closed):
             await self._close()
         elif isinstance(event, Updated):
@@ -91,6 +95,31 @@ class TCPServer:
                 await self.idle_task.restart(self._task_group, self._idle_timeout)
             else:
                 await self.idle_task.stop()
+
+    async def _send_file(self, file: BinaryIO) -> None:
+        transport = getattr(self.writer, "transport", None)
+        if transport is not None and self.writer.get_extra_info("ssl_object") is None:
+            try:
+                await self.loop.sendfile(transport, file, fallback=False)
+                return
+            except RuntimeError:
+                # The transport or platform doesn't support sendfile,
+                # fall back to reading and writing bounded chunks.
+                pass
+            except OSError:
+                # The client has likely disconnected
+                await self.protocol.handle(Closed())
+                return
+        try:
+            while True:
+                chunk = file.read(MAX_SEND)
+                if chunk == b"":
+                    break
+                self.writer.write(chunk)
+                await self.writer.drain()
+        except (ConnectionError, RuntimeError):
+            # The client has likely disconnected
+            await self.protocol.handle(Closed())
 
     async def _read_data(self) -> None:
         while not self.reader.at_eof():
