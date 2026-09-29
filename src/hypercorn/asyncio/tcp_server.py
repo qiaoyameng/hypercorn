@@ -8,7 +8,7 @@ from typing import Any
 from .task_group import TaskGroup
 from .worker_context import AsyncioSingleTask, WorkerContext
 from ..config import Config
-from ..events import Closed, Event, RawData, Updated
+from ..events import Closed, Event, RawData, ReadClosed, Updated
 from ..protocol import ProtocolWrapper
 from ..typing import AppWrapper, ConnectionState, LifespanState
 from ..utils import parse_socket_addr
@@ -93,7 +93,7 @@ class TCPServer:
                 await self.idle_task.stop()
 
     async def _read_data(self) -> None:
-        while not self.reader.at_eof():
+        while True:
             try:
                 data = await asyncio.wait_for(self.reader.read(MAX_RECV), self.config.read_timeout)
             except (
@@ -105,6 +105,11 @@ class TCPServer:
             ):
                 break
             else:
+                if data == b"":
+                    # The client has half-closed the connection, the
+                    # protocol may still have data to send.
+                    await self.protocol.handle(ReadClosed())
+                    return
                 await self.protocol.handle(RawData(data))
 
         await self.protocol.handle(Closed())

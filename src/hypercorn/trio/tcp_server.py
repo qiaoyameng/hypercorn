@@ -9,7 +9,7 @@ import trio
 from .task_group import TaskGroup
 from .worker_context import TrioSingleTask, WorkerContext
 from ..config import Config
-from ..events import Closed, Event, RawData, Updated
+from ..events import Closed, Event, RawData, ReadClosed, Updated
 from ..protocol import ProtocolWrapper
 from ..typing import AppWrapper, ConnectionState, LifespanState
 from ..utils import parse_socket_addr
@@ -109,9 +109,12 @@ class TCPServer:
             ):
                 break
             else:
-                await self.protocol.handle(RawData(bytes(data)))
                 if data == b"":
-                    break
+                    # The client has half-closed the connection, the
+                    # protocol may still have data to send.
+                    await self.protocol.handle(ReadClosed())
+                    return
+                await self.protocol.handle(RawData(bytes(data)))
         await self.protocol.handle(Closed())
 
     async def _close(self) -> None:

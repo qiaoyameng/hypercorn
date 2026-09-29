@@ -1,3 +1,12 @@
+Unreleased
+----------
+
+* Add an opt-in ASGI tunnel extension for CONNECT requests, allowing
+  apps to accept (and then exchange raw bytes both ways) or reject
+  with a normal HTTP response. Works over HTTP/1.1 (connection
+  switch) and HTTP/2 (single stream), with client half-closes only
+  closing the client to server direction.
+
 0.18.0 2025-11-08
 -----------------
 

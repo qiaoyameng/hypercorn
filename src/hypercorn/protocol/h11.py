@@ -18,9 +18,10 @@ from .events import (
     StreamClosed,
 )
 from .http_stream import HTTPStream
+from .tunnel_stream import TunnelStream
 from .ws_stream import WSStream
 from ..config import Config
-from ..events import Closed, Event, RawData, Updated
+from ..events import Closed, Event, RawData, ReadClosed, Updated
 from ..typing import AppWrapper, ConnectionState, H11SendableEvent, TaskGroup, WorkerContext
 
 STREAM_ID = 1
@@ -103,7 +104,7 @@ class H11Protocol:
         self.send = send
         self.server = server
         self.ssl = ssl
-        self.stream: HTTPStream | WSStream | None = None
+        self.stream: HTTPStream | WSStream | TunnelStream | None = None
         self.task_group = task_group
         self.connection_state = connection_state
 
@@ -114,6 +115,13 @@ class H11Protocol:
         if isinstance(event, RawData):
             self.connection.receive_data(event.data)
             await self._handle_events()
+        elif isinstance(event, ReadClosed):
+            if isinstance(self.stream, TunnelStream) and self.stream.connected:
+                # The client has half-closed an established tunnel,
+                # only the client to server direction is closed.
+                await self.stream.handle(EndBody(stream_id=STREAM_ID))
+            else:
+                await self._close_stream()
         elif isinstance(event, Closed):
             if self.stream is not None:
                 await self._close_stream()
@@ -213,6 +221,22 @@ class H11Protocol:
                 self.stream_send,
                 STREAM_ID,
             )
+            self.connection = H11WSConnection(cast(h11.Connection, self.connection))
+        elif request.method == b"CONNECT":
+            self.stream = TunnelStream(
+                self.app,
+                self.config,
+                self.context,
+                self.task_group,
+                self.ssl,
+                self.client,
+                self.server,
+                self.stream_send,
+                STREAM_ID,
+            )
+            # Once the tunnel is accepted the connection switches to
+            # raw data passthrough, the H11WSConnection handles this
+            # (and prevents the connection being recycled).
             self.connection = H11WSConnection(cast(h11.Connection, self.connection))
         else:
             self.stream = HTTPStream(

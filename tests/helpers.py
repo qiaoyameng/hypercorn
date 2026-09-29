@@ -72,6 +72,47 @@ async def echo_framework(
             await send({"type": "websocket.send", "text": event["text"], "bytes": event["bytes"]})
 
 
+async def tunnel_framework(
+    scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable
+) -> None:
+    # An in-app echo endpoint, the tunnel target is decided by the
+    # app itself (nothing is dialed by the server).
+    if scope["type"] == "tunnel":
+        if scope["path"].startswith("reject."):
+            await send(
+                {
+                    "type": "tunnel.http.response.start",
+                    "status": 403,
+                    "headers": [(b"content-length", b"9")],
+                }
+            )
+            await send({"type": "tunnel.http.response.body", "body": b"Forbidden"})
+            return
+        await send({"type": "tunnel.accept", "headers": []})
+        while True:
+            event = await receive()
+            if event["type"] == "tunnel.disconnect":
+                break
+            elif event["type"] == "tunnel.receive":
+                if event["bytes"] != b"":
+                    await send({"type": "tunnel.send", "bytes": event["bytes"]})
+                if not event["more"]:
+                    # The client half-closed, send any remaining data
+                    # before closing our direction.
+                    await send({"type": "tunnel.send", "bytes": b"Goodbye"})
+                    await send({"type": "tunnel.close"})
+                    break
+    elif scope["type"] == "http":
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-length", b"5")],
+            }
+        )
+        await send({"type": "http.response.body", "body": b"Hello"})
+
+
 async def sanity_framework(
     scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable
 ) -> None:

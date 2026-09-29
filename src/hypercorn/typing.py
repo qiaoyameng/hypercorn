@@ -63,14 +63,31 @@ class WebsocketScope(TypedDict):
     extensions: dict[str, dict]
 
 
+class TunnelScope(TypedDict):
+    type: Literal["tunnel"]
+    asgi: ASGIVersions
+    http_version: str
+    method: str
+    scheme: str
+    path: str
+    raw_path: bytes
+    query_string: bytes
+    root_path: str
+    headers: Iterable[tuple[bytes, bytes]]
+    client: tuple[str, int] | None
+    server: tuple[str, int | None] | None
+    state: ConnectionState
+    extensions: dict[str, dict]
+
+
 class LifespanScope(TypedDict):
     type: Literal["lifespan"]
     asgi: ASGIVersions
     state: LifespanState
 
 
-WWWScope = HTTPScope | WebsocketScope
-Scope = HTTPScope | WebsocketScope | LifespanScope
+WWWScope = HTTPScope | WebsocketScope | TunnelScope
+Scope = HTTPScope | WebsocketScope | TunnelScope | LifespanScope
 
 
 class HTTPRequestEvent(TypedDict):
@@ -158,6 +175,46 @@ class WebsocketCloseEvent(TypedDict):
     reason: str | None
 
 
+class TunnelConnectEvent(TypedDict):
+    type: Literal["tunnel.connect"]
+
+
+class TunnelReceiveEvent(TypedDict):
+    type: Literal["tunnel.receive"]
+    bytes: bytes
+    more: bool
+
+
+class TunnelDisconnectEvent(TypedDict):
+    type: Literal["tunnel.disconnect"]
+
+
+class TunnelAcceptEvent(TypedDict):
+    type: Literal["tunnel.accept"]
+    headers: NotRequired[Iterable[tuple[bytes, bytes]]]
+
+
+class TunnelSendEvent(TypedDict):
+    type: Literal["tunnel.send"]
+    bytes: bytes
+
+
+class TunnelCloseEvent(TypedDict):
+    type: Literal["tunnel.close"]
+
+
+class TunnelResponseStartEvent(TypedDict):
+    type: Literal["tunnel.http.response.start"]
+    status: int
+    headers: Iterable[tuple[bytes, bytes]]
+
+
+class TunnelResponseBodyEvent(TypedDict):
+    type: Literal["tunnel.http.response.body"]
+    body: bytes
+    more_body: NotRequired[bool]
+
+
 class LifespanStartupEvent(TypedDict):
     type: Literal["lifespan.startup"]
 
@@ -190,6 +247,9 @@ ASGIReceiveEvent = (
     | WebsocketConnectEvent
     | WebsocketReceiveEvent
     | WebsocketDisconnectEvent
+    | TunnelConnectEvent
+    | TunnelReceiveEvent
+    | TunnelDisconnectEvent
     | LifespanStartupEvent
     | LifespanShutdownEvent
 )
@@ -206,6 +266,11 @@ ASGISendEvent = (
     | WebsocketResponseStartEvent
     | WebsocketResponseBodyEvent
     | WebsocketCloseEvent
+    | TunnelAcceptEvent
+    | TunnelSendEvent
+    | TunnelCloseEvent
+    | TunnelResponseStartEvent
+    | TunnelResponseBodyEvent
     | LifespanStartupCompleteEvent
     | LifespanStartupFailedEvent
     | LifespanShutdownCompleteEvent

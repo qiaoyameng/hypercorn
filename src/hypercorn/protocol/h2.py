@@ -21,9 +21,10 @@ from .events import (
     Trailers,
 )
 from .http_stream import HTTPStream
+from .tunnel_stream import TunnelStream
 from .ws_stream import WSStream
 from ..config import Config
-from ..events import Closed, Event, RawData, Updated
+from ..events import Closed, Event, RawData, ReadClosed, Updated
 from ..typing import AppWrapper, ConnectionState, Event as IOEvent, TaskGroup, WorkerContext
 from ..utils import filter_pseudo_headers
 
@@ -113,10 +114,11 @@ class H2Protocol:
         )
 
         self.keep_alive_requests = 0
+        self.read_closed = False
         self.send = send
         self.server = server
         self.ssl = ssl
-        self.streams: dict[int, HTTPStream | WSStream] = {}
+        self.streams: dict[int, HTTPStream | WSStream | TunnelStream] = {}
         # The below are used by the sending task
         self.has_data = self.context.event_class()
         self.priority = priority.PriorityTree()
@@ -188,6 +190,19 @@ class H2Protocol:
                 await self.send(Closed())
             else:
                 await self._handle_events(events)
+        elif isinstance(event, ReadClosed):
+            # The client has half-closed the connection, no more data
+            # will be received but pending data can still be sent.
+            self.read_closed = True
+            for stream_id, stream in list(self.streams.items()):
+                if isinstance(stream, TunnelStream) and stream.connected:
+                    await stream.handle(EndBody(stream_id=stream_id))
+                else:
+                    await self._close_stream(stream_id)
+            if len(self.streams) == 0:
+                self.closed = True
+                await self.has_data.set()
+                await self.send(Closed())
         elif isinstance(event, Closed):
             self.closed = True
             stream_ids = list(self.streams.keys())
@@ -225,10 +240,17 @@ class H2Protocol:
                 idle = len(self.streams) == 0 or all(
                     stream.idle for stream in self.streams.values()
                 )
-                if idle and self.context.terminated.is_set():
-                    self.connection.close_connection()
-                    await self._flush()
-                await self.send(Updated(idle=idle))
+                if self.read_closed and len(self.streams) == 0:
+                    # The client half-closed the connection and all
+                    # the streams have finished, fully close it.
+                    self.closed = True
+                    await self.has_data.set()
+                    await self.send(Closed())
+                else:
+                    if idle and self.context.terminated.is_set():
+                        self.connection.close_connection()
+                        await self._flush()
+                    await self.send(Updated(idle=idle))
             elif isinstance(event, Request):
                 await self._create_server_push(event.stream_id, event.raw_path, event.headers)
         except (
@@ -317,24 +339,51 @@ class H2Protocol:
         await self.has_data.set()
 
     async def _create_stream(self, request: h2.events.RequestReceived) -> None:
+        method = ""
+        protocol: bytes | None = None
+        raw_path = b""
+        authority = b""
         for name, value in request.headers:
             if name == b":method":
                 method = value.decode("ascii").upper()
             elif name == b":path":
                 raw_path = value
+            elif name == b":protocol":
+                protocol = value
+            elif name == b":authority":
+                authority = value
 
         if method == "CONNECT":
-            self.streams[request.stream_id] = WSStream(
-                self.app,
-                self.config,
-                self.context,
-                self.task_group,
-                self.ssl,
-                self.client,
-                self.server,
-                self.stream_send,
-                request.stream_id,
-            )
+            if protocol == b"websocket":
+                # RFC 8441 extended CONNECT (WebSockets over HTTP/2)
+                self.streams[request.stream_id] = WSStream(
+                    self.app,
+                    self.config,
+                    self.context,
+                    self.task_group,
+                    self.ssl,
+                    self.client,
+                    self.server,
+                    self.stream_send,
+                    request.stream_id,
+                )
+            else:
+                # Plain CONNECT, a raw byte tunnel
+                if raw_path == b"":
+                    # CONNECT requests usually have no :path, the
+                    # target is the :authority.
+                    raw_path = authority
+                self.streams[request.stream_id] = TunnelStream(
+                    self.app,
+                    self.config,
+                    self.context,
+                    self.task_group,
+                    self.ssl,
+                    self.client,
+                    self.server,
+                    self.stream_send,
+                    request.stream_id,
+                )
         else:
             self.streams[request.stream_id] = HTTPStream(
                 self.app,
